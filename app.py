@@ -23,14 +23,14 @@ def webhook():
     caller_name   = data.get("caller_name", "Unknown")
     caller_number = data.get("caller_number", "Unknown")
     car_issue     = data.get("car_issue", "Not specified")
-    can_drive     = data.get("can_drive", "Unknown")
+    can_location     = data.get("can_location", "Unknown")
 
     message = (
         f"📞 Missed Call\n"
         f"Name: {caller_name}\n"
         f"Number: {caller_number}\n"
         f"Issue: {car_issue}\n"
-        f"Driveable: {can_drive}"
+        f"Driveable: {can_location}"
     )
 
     client.messages.create(
