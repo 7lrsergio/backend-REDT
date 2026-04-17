@@ -34,9 +34,9 @@ def verify_retell_signature(req):
 
     combined = ts + body
     expected = hmac.new(
-        os.getenv("RETELL_API_KEY").encode(),  # ← your Retell API key from Retell dashboard
-        combined.encode(),
-        hashlib.sha256
+    os.getenv("RETELL_API_KEY").encode(),
+    combined.encode(),
+    hashlib.sha256
     ).hexdigest()
 
     return hmac.compare_digest(signature, expected)
