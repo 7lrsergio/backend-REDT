@@ -12,10 +12,11 @@ load_dotenv()
 app = Flask(__name__)
 
 # ── Twilio client ──────────────────────────────────────────────────────────────
-client = Client(
-    os.getenv("TWILIO_ACCOUNT_SID"),   # ← your Twilio Account SID (starts with AC...)
-    os.getenv("TWILIO_AUTH_TOKEN")     # ← your Twilio Auth Token
-)
+def get_twilio_client():
+    return Client(
+        os.getenv("TWILIO_ACCOUNT_SID"),
+        os.getenv("TWILIO_AUTH_TOKEN")
+    )
 
 # ── Rate limiter ───────────────────────────────────────────────────────────────
 limiter = Limiter(get_remote_address, app=app, default_limits=["10 per minute"])
@@ -70,12 +71,12 @@ def webhook():
         f"Name: {caller_name}\n"
         f"Number: {caller_number}\n"
         f"Issue: {car_issue}\n"
-        f"Driveable: {car_location}"
+        f"Location: {car_location}"
     )
 
     # 5. Send SMS via Twilio — wrapped so errors don't leak stack traces
     try:
-        client.messages.create(
+        get_twilio_client().messages.create(
             body=message,
             messaging_service_sid=os.getenv("TWILIO_MESSAGING_SERVICE_SID"),  # ← starts with MG...
             to=os.getenv("MECHANIC_PHONE")  # ← mechanic's number e.g. +14795551234
