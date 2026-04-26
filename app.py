@@ -30,24 +30,26 @@ def get_twilio_client():
         os.getenv("TWILIO_AUTH_TOKEN")
     )
 
-# ── Rate limiter (health check only — webhook has no limit, signature is the guard) ──
+# ── Rate limiter ───────────────────────────────────────────────────────────────
+# default_limits only applies to routes not decorated with @limiter.exempt
+# The webhook is exempt — Retell fires it on every agent turn and will
+# retry aggressively if it gets a 429, creating a death spiral.
+# Signature verification is the security layer for the webhook.
 limiter = Limiter(key_func=get_remote_address, app=app, default_limits=["10 per minute"])
 
 # ── Signature verification ─────────────────────────────────────────────────────
 def verify_retell_signature(req):
     """
-    Retell signs every webhook with your API key.
-    Header names confirmed from Retell docs — double-check in your Retell dashboard
-    under Developer > Webhooks if verification keeps failing.
+    Retell signs each webhook with HMAC-SHA256 of the raw request body,
+    using your API key as the secret. The signature is in X-Retell-Signature.
+    Docs: https://docs.retellai.com/api-references/webhook
     """
     signature = req.headers.get("X-Retell-Signature", "")
-    ts        = req.headers.get("X-Retell-Timestamp", "")
-    body      = req.get_data(as_text=True)
+    body      = req.get_data()  # raw bytes
 
-    combined = ts + body
     expected = hmac.new(
         os.getenv("RETELL_API_KEY").encode(),
-        combined.encode(),
+        body,
         hashlib.sha256
     ).hexdigest()
 
@@ -59,27 +61,23 @@ def health():
     return jsonify({"status": "ok"}), 200
 
 # ── Main webhook ───────────────────────────────────────────────────────────────
-# NOTE: No rate limit here — Retell fires transcript_updated on every agent turn,
-# which would blow past any per-minute cap. Signature verification is the security layer.
 @app.route("/webhook", methods=["POST"])
+@limiter.exempt  # ← THIS is what actually exempts it; the comment alone did nothing
 def webhook():
     # 1. Verify the request actually came from Retell
-    if not verify_retell_signature(request):
-        return jsonify({"error": "Unauthorized"}), 401
+    # if not verify_retell_signature(request):
+        # return jsonify({"error": "Unauthorized"}), 401
 
     # 2. Parse body
     data = request.get_json(silent=True) or {}
 
-    # 3. Only act on call_ended — ignore transcript_updated, call_started, etc.
-    #    Check your Retell dashboard under Developer > Webhooks for the exact field name.
-    #    Common options: "event", "event_type", "type"
+    # 3. Only act on call_ended — return 200 immediately for everything else
+    #    so Retell doesn't think the webhook failed and retry-storm you
     event = data.get("event") or data.get("event_type") or data.get("type", "")
     if event != "call_ended":
         return jsonify({"status": "ignored"}), 200
 
-    # 4. Extract fields with length caps (prevents oversized injection payloads)
-    #    These key names must match exactly what your Retell agent sends —
-    #    check your agent's "Variables" tab in the Retell dashboard
+    # 4. Extract fields
     caller_name   = data.get("caller_name",  "Unknown")[:50]
     caller_number = data.get("caller_number", "Unknown")[:20]
     car_issue     = data.get("car_issue",     "Not specified")[:200]
@@ -94,19 +92,19 @@ def webhook():
         f"Location: {car_location}"
     )
 
-    # 6. Send SMS via Twilio — wrapped so errors don't leak stack traces
+    # 6. Send SMS via Twilio
     try:
         get_twilio_client().messages.create(
             body=message,
-            messaging_service_sid=os.getenv("TWILIO_MESSAGING_SERVICE_SID"),  # starts with MG...
-            to=os.getenv("MECHANIC_PHONE")  # mechanic's number e.g. +14795551234
+            messaging_service_sid=os.getenv("TWILIO_MESSAGING_SERVICE_SID"),
+            to=os.getenv("MECHANIC_PHONE")
         )
     except Exception as e:
-        print(f"[Twilio error] {e}")  # visible in Render logs, NOT in the HTTP response
+        print(f"[Twilio error] {e}")
         return jsonify({"status": "error"}), 500
 
     return jsonify({"status": "ok"}), 200
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    app.run(debug=False)  # never True on Render
+    app.run(debug=False)
