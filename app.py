@@ -77,11 +77,14 @@ def webhook():
     if event != "call_ended":
         return jsonify({"status": "ignored"}), 200
 
-    # 4. Extract fields
-    caller_name   = data.get("caller_name",  "Unknown")[:50]
-    caller_number = data.get("caller_number", "Unknown")[:20]
-    car_issue     = data.get("car_issue",     "Not specified")[:200]
-    car_location  = data.get("car_location",  "Unknown")[:100]
+  # 4. Extract fields
+call = data.get("call", {})
+analysis = call.get("call_analysis", {})
+
+caller_name   = analysis.get("caller_name",  "Unknown")[:50]
+caller_number = analysis.get("caller_number", "Unknown")[:20]
+car_issue     = analysis.get("car_issue",     "Not specified")[:200]
+car_location  = analysis.get("car_location",  "Unknown")[:100]
 
     # 5. Build SMS
     message = (
