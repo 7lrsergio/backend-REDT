@@ -31,28 +31,17 @@ def get_twilio_client():
     )
 
 # ── Rate limiter ───────────────────────────────────────────────────────────────
-# default_limits only applies to routes not decorated with @limiter.exempt
-# The webhook is exempt — Retell fires it on every agent turn and will
-# retry aggressively if it gets a 429, creating a death spiral.
-# Signature verification is the security layer for the webhook.
 limiter = Limiter(key_func=get_remote_address, app=app, default_limits=["10 per minute"])
 
 # ── Signature verification ─────────────────────────────────────────────────────
 def verify_retell_signature(req):
-    """
-    Retell signs each webhook with HMAC-SHA256 of the raw request body,
-    using your API key as the secret. The signature is in X-Retell-Signature.
-    Docs: https://docs.retellai.com/api-references/webhook
-    """
     signature = req.headers.get("X-Retell-Signature", "")
-    body      = req.get_data()  # raw bytes
-
-    expected = hmac.new(
+    body      = req.get_data()
+    expected  = hmac.new(
         os.getenv("RETELL_API_KEY").encode(),
         body,
         hashlib.sha256
     ).hexdigest()
-
     return hmac.compare_digest(signature, expected)
 
 # ── Health check ───────────────────────────────────────────────────────────────
@@ -62,29 +51,28 @@ def health():
 
 # ── Main webhook ───────────────────────────────────────────────────────────────
 @app.route("/webhook", methods=["POST"])
-@limiter.exempt  # ← THIS is what actually exempts it; the comment alone did nothing
+@limiter.exempt
 def webhook():
-    # 1. Verify the request actually came from Retell
+    # 1. Verify signature
     # if not verify_retell_signature(request):
-        # return jsonify({"error": "Unauthorized"}), 401
+    #     return jsonify({"error": "Unauthorized"}), 401
 
     # 2. Parse body
     data = request.get_json(silent=True) or {}
 
-    # 3. Only act on call_ended — return 200 immediately for everything else
-    #    so Retell doesn't think the webhook failed and retry-storm you
+    # 3. Only act on call_ended
     event = data.get("event") or data.get("event_type") or data.get("type", "")
     if event != "call_ended":
         return jsonify({"status": "ignored"}), 200
 
-  # 4. Extract fields
-call = data.get("call", {})
-analysis = call.get("call_analysis", {})
+    # 4. Extract fields from nested call_analysis
+    call     = data.get("call", {})
+    analysis = call.get("call_analysis", {})
 
-caller_name   = analysis.get("caller_name",  "Unknown")[:50]
-caller_number = analysis.get("caller_number", "Unknown")[:20]
-car_issue     = analysis.get("car_issue",     "Not specified")[:200]
-car_location  = analysis.get("car_location",  "Unknown")[:100]
+    caller_name   = analysis.get("caller_name",  "Unknown")[:50]
+    caller_number = analysis.get("caller_number", "Unknown")[:20]
+    car_issue     = analysis.get("car_issue",     "Not specified")[:200]
+    car_location  = analysis.get("car_location",  "Unknown")[:100]
 
     # 5. Build SMS
     message = (
