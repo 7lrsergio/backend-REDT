@@ -1,4 +1,5 @@
 import os
+import json
 import hmac
 import hashlib
 from flask import Flask, request, jsonify
@@ -60,21 +61,25 @@ def webhook():
     # 2. Parse body
     data = request.get_json(silent=True) or {}
 
-    # 3. Only act on call_ended
+    # 3. Debug log — check Render logs after a test call
+    print("[DEBUG payload]", json.dumps(data, indent=2))
+
+    # 4. Only act on call_ended
     event = data.get("event") or data.get("event_type") or data.get("type", "")
     if event != "call_ended":
         return jsonify({"status": "ignored"}), 200
 
-    # 4. Extract fields from nested call_analysis
+    # 5. Extract fields
     call     = data.get("call", {})
     analysis = call.get("call_analysis", {})
+    custom   = analysis.get("custom_analysis_data", {})
 
-    caller_name   = analysis.get("caller_name",  "Unknown")[:50]
-    caller_number = analysis.get("caller_number", "Unknown")[:20]
-    car_issue     = analysis.get("car_issue",     "Not specified")[:200]
-    car_location  = analysis.get("car_location",  "Unknown")[:100]
+    caller_name   = custom.get("caller_name",  "Unknown")[:50]
+    car_issue     = custom.get("car_issue",    "Not specified")[:200]
+    car_location  = custom.get("car_location", "Unknown")[:100]
+    caller_number = call.get("from_number",    "Unknown")[:20]
 
-    # 5. Build SMS
+    # 6. Build SMS
     message = (
         f"📞 Missed Call\n"
         f"Name: {caller_name}\n"
@@ -83,7 +88,7 @@ def webhook():
         f"Location: {car_location}"
     )
 
-    # 6. Send SMS via Twilio
+    # 7. Send SMS via Twilio
     try:
         get_twilio_client().messages.create(
             body=message,
