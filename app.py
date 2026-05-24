@@ -12,7 +12,6 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# ── Startup env var guard ──────────────────────────────────────────────────────
 required_vars = [
     "TWILIO_ACCOUNT_SID",
     "TWILIO_AUTH_TOKEN",
@@ -24,17 +23,14 @@ for var in required_vars:
     if not os.getenv(var):
         raise RuntimeError(f"Missing env var: {var}")
 
-# ── Twilio client ──────────────────────────────────────────────────────────────
 def get_twilio_client():
     return Client(
         os.getenv("TWILIO_ACCOUNT_SID"),
         os.getenv("TWILIO_AUTH_TOKEN")
     )
 
-# ── Rate limiter ───────────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address, app=app, default_limits=["10 per minute"])
 
-# ── Signature verification ─────────────────────────────────────────────────────
 def verify_retell_signature(req):
     signature = req.headers.get("X-Retell-Signature", "")
     body      = req.get_data()
@@ -45,41 +41,34 @@ def verify_retell_signature(req):
     ).hexdigest()
     return hmac.compare_digest(signature, expected)
 
-# ── Health check ───────────────────────────────────────────────────────────────
 @app.route("/webhook", methods=["GET"])
 def health():
     return jsonify({"status": "ok"}), 200
 
-# ── Main webhook ───────────────────────────────────────────────────────────────
 @app.route("/webhook", methods=["POST"])
 @limiter.exempt
 def webhook():
-    # 1. Verify signature
-    # if not verify_retell_signature(request):
-    #     return jsonify({"error": "Unauthorized"}), 401
-
-    # 2. Parse body
     data = request.get_json(silent=True) or {}
 
-    # 3. Debug log — check Render logs after a test call
-    print("[DEBUG payload]", json.dumps(data, indent=2))
-
-    # 4. Only act on call_ended
     event = data.get("event") or data.get("event_type") or data.get("type", "")
     if event != "call_ended":
         return jsonify({"status": "ignored"}), 200
 
-    # 5. Extract fields
     call     = data.get("call", {})
     analysis = call.get("call_analysis", {})
     custom   = analysis.get("custom_analysis_data", {})
+
+    # ── Targeted debug ──────────────────────────────────────────────────────
+    print("[DEBUG event]", event)
+    print("[DEBUG custom]", json.dumps(custom, indent=2))
+    print("[DEBUG from_number]", call.get("from_number"))
+    # ───────────────────────────────────────────────────────────────────────
 
     caller_name   = custom.get("caller_name",  "Unknown")[:50]
     car_issue     = custom.get("car_issue",    "Not specified")[:200]
     car_location  = custom.get("car_location", "Unknown")[:100]
     caller_number = call.get("from_number",    "Unknown")[:20]
 
-    # 6. Build SMS
     message = (
         f"📞 Missed Call\n"
         f"Name: {caller_name}\n"
@@ -88,7 +77,6 @@ def webhook():
         f"Location: {car_location}"
     )
 
-    # 7. Send SMS via Twilio
     try:
         get_twilio_client().messages.create(
             body=message,
@@ -101,6 +89,5 @@ def webhook():
 
     return jsonify({"status": "ok"}), 200
 
-# ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     app.run(debug=False)
